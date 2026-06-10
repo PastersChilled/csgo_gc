@@ -3,6 +3,8 @@
 #include "config.h"
 #include "gc_shared.h"
 #include "inventory.h"
+#include <thread>
+#include <atomic>
 
 class ClientGC final : public SharedGC
 {
@@ -45,6 +47,15 @@ private:
         const CMsgGCCStrike15_v2_MatchmakingGC2ClientHello &matchmakingHello);
     void SendRankUpdate();
 
+    // --- bot matchmaking simulation ---
+    void OnMatchmakingStart(GCMessageRead &messageRead);
+    void OnMatchmakingStop(GCMessageRead &messageRead);
+    void SendMatchmakingUpdate(int state);
+    void SendMatchFound();
+    void LaunchBotServer(uint32_t gameType, const std::string &map);
+    std::string PickMapForGameType(uint32_t gameType);
+    void UpdateRankAfterMatch(bool won);
+
     uint32_t AccountId() const { return m_steamId & 0xffffffff; }
 
     const uint64_t m_steamId;
@@ -54,4 +65,9 @@ private:
     // microtransactions, we only have one going at a time
     uint64_t m_transactionId{};
     std::vector<uint64_t> m_transactionItemIds;
+
+    // bot matchmaking state
+    bool m_searching{ false };
+    uint32_t m_searchGameType{ 0 };
+    std::thread m_matchmakingThread;
 };
