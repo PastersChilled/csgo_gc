@@ -7,16 +7,16 @@ ClientGC::ClientGC(uint64_t steamId)
     : m_steamId{ steamId }
     , m_inventory{ steamId }
 {
-    // also called from ServerGC's constructor
     Graffiti::Initialize();
-
     StartThread();
-
     Platform::Print("ClientGC spawned for user %llu\n", steamId);
 }
 
 ClientGC::~ClientGC()
 {
+    m_searching = false;
+    if (m_matchmakingThread.joinable())
+        m_matchmakingThread.join();
     StopThread();
     Platform::Print("ClientGC destroyed\n");
 }
@@ -28,15 +28,12 @@ void ClientGC::HandleEvent(GCEvent type, uint64_t id, const std::vector<uint8_t>
     case GCEvent::Message:
         HandleMessage(static_cast<uint32_t>(id), buffer.data(), static_cast<uint32_t>(buffer.size()));
         break;
-
     case GCEvent::NetMessage:
         HandleNetMessage(buffer.data(), static_cast<uint32_t>(buffer.size()));
         break;
-
     case GCEvent::SOCacheRequest:
         HandleSOCacheRequest();
         break;
-
     default:
         assert(false);
         break;
@@ -59,43 +56,39 @@ void ClientGC::HandleMessage(uint32_t type, const void *data, uint32_t size)
         case k_EMsgGCClientHello:
             OnClientHello(messageRead);
             break;
-
         case k_EMsgGCAdjustItemEquippedState:
             AdjustItemEquippedState(messageRead);
             break;
-
         case k_EMsgGCCStrike15_v2_ClientPlayerDecalSign:
             ClientPlayerDecalSign(messageRead);
             break;
-
         case k_EMsgGCUseItemRequest:
             UseItemRequest(messageRead);
             break;
-
         case k_EMsgGCCStrike15_v2_ClientRequestJoinServerData:
             ClientRequestJoinServerData(messageRead);
             break;
-
         case k_EMsgGCSetItemPositions:
             SetItemPositions(messageRead);
             break;
-
         case k_EMsgGCApplySticker:
             ApplySticker(messageRead);
             break;
-
+        case k_EMsgGCCStrike15_v2_MatchmakingStart:
+            OnMatchmakingStart(messageRead);
+            break;
+        case k_EMsgGCCStrike15_v2_MatchmakingStop:
+            OnMatchmakingStop(messageRead);
+            break;
         case k_EMsgGCStoreGetUserData:
             StoreGetUserData(messageRead);
             break;
-
         case k_EMsgGCStorePurchaseInit:
             StorePurchaseInit(messageRead);
             break;
-
         case k_EMsgGCStorePurchaseFinalize:
             StorePurchaseFinalize(messageRead);
             break;
-
         default:
             Platform::Print("ClientGC::HandleMessage: unhandled protobuf message %s\n",
                 MessageName(messageRead.TypeUnmasked()));
@@ -109,23 +102,18 @@ void ClientGC::HandleMessage(uint32_t type, const void *data, uint32_t size)
         case k_EMsgGCDelete:
             DeleteItem(messageRead);
             break;
-
         case k_EMsgGCUnlockCrate:
             UnlockCrate(messageRead);
             break;
-
         case k_EMsgGCNameItem:
             NameItem(messageRead);
             break;
-
         case k_EMsgGCNameBaseItem:
             NameBaseItem(messageRead);
             break;
-
         case k_EMsgGCRemoveItemName:
             RemoveItemName(messageRead);
             break;
-
         default:
             Platform::Print("ClientGC::HandleMessage: unhandled struct message %s\n",
                 MessageName(messageRead.TypeUnmasked()));
@@ -136,7 +124,6 @@ void ClientGC::HandleMessage(uint32_t type, const void *data, uint32_t size)
 
 void ClientGC::HandleNetMessage(const void *data, uint32_t size)
 {
-    // pass 0 as type so it gets parsed from the message
     GCMessageRead messageRead{ 0, data, size };
     if (!messageRead.IsValid())
     {
@@ -173,9 +160,7 @@ void ClientGC::SendMessageToGame(bool sendToGameServer, uint32_t type,
     GCMessageWrite messageWrite{ type, message, jobId };
 
     if (sendToGameServer)
-    {
         PostToHost(HostEvent::NetMessage, 0, messageWrite.Data(), messageWrite.Size());
-    }
 
     PostToHost(HostEvent::Message, messageWrite.TypeMasked(), messageWrite.Data(), messageWrite.Size());
 }
@@ -187,7 +172,6 @@ constexpr uint32_t MakeAddress(uint32_t v1, uint32_t v2, uint32_t v3, uint32_t v
 
 static void BuildCSWelcome(CMsgCStrike15Welcome &message)
 {
-    // mikkotodo cleanup dox
     message.set_store_item_hash(136617352);
     message.set_timeplayedconsecutively(0);
     message.set_time_first_played(1329845773);
@@ -199,25 +183,19 @@ void ClientGC::BuildMatchmakingHello(CMsgGCCStrike15_v2_MatchmakingGC2ClientHell
 {
     message.set_account_id(AccountId());
 
-    // this is the state of csgo matchmaking in 2024
     message.mutable_global_stats()->set_players_online(0);
     message.mutable_global_stats()->set_servers_online(0);
     message.mutable_global_stats()->set_players_searching(0);
     message.mutable_global_stats()->set_servers_available(0);
     message.mutable_global_stats()->set_ongoing_matches(0);
     message.mutable_global_stats()->set_search_time_avg(0);
-
-    // don't write search_statistics
-
     message.mutable_global_stats()->set_main_post_url("");
-
-    // bullshit
     message.mutable_global_stats()->set_required_appid_version(13857);
-    message.mutable_global_stats()->set_pricesheet_version(1680057676); // mikkotodo revisit
+    message.mutable_global_stats()->set_pricesheet_version(1680057676);
     message.mutable_global_stats()->set_twitch_streams_version(2);
     message.mutable_global_stats()->set_active_tournament_eventid(20);
     message.mutable_global_stats()->set_active_survey_id(0);
-    message.mutable_global_stats()->set_required_appid_version2(13862); // csgo s2
+    message.mutable_global_stats()->set_required_appid_version2(13862);
 
     message.set_vac_banned(GetConfig().VacBanned());
     message.mutable_commendation()->set_cmd_friendly(GetConfig().CommendedFriendly());
@@ -230,17 +208,16 @@ void ClientGC::BuildMatchmakingHello(CMsgGCCStrike15_v2_MatchmakingGC2ClientHell
 void ClientGC::BuildClientWelcome(CMsgClientWelcome &message, const CMsgCStrike15Welcome &csWelcome,
     const CMsgGCCStrike15_v2_MatchmakingGC2ClientHello &matchmakingHello)
 {
-    // mikkotodo remove dox
-    message.set_version(0); // this is accurate
+    message.set_version(0);
     message.set_game_data(csWelcome.SerializeAsString());
     m_inventory.BuildCacheSubscription(*message.add_outofdate_subscribed_caches(), GetConfig().Level(), false);
     message.mutable_location()->set_latitude(65.0133006f);
     message.mutable_location()->set_longitude(25.4646212f);
-    message.mutable_location()->set_country("FI"); // finland
+    message.mutable_location()->set_country("FI");
     message.set_game_data2(matchmakingHello.SerializeAsString());
     message.set_rtime32_gc_welcome_timestamp(static_cast<uint32_t>(time(nullptr)));
-    message.set_currency(2); // euros
-    message.set_txn_country_code("FI"); // finland
+    message.set_currency(2);
+    message.set_txn_country_code("FI");
 }
 
 void ClientGC::SendRankUpdate()
@@ -277,7 +254,6 @@ void ClientGC::OnClientHello(GCMessageRead &messageRead)
         return;
     }
 
-    // we don't care about anything in this message, just reply
     CMsgCStrike15Welcome csWelcome;
     BuildCSWelcome(csWelcome);
 
@@ -288,13 +264,7 @@ void ClientGC::OnClientHello(GCMessageRead &messageRead)
     BuildClientWelcome(clientWelcome, csWelcome, mmHello);
 
     SendMessageToGame(false, k_EMsgGCClientWelcome, clientWelcome);
-
-    // the real gc sends this a bit later when it has more info to put on it
-    // however we have everything at our fingertips so send it right away
-    // mikkotodo is this even needed? k_EMsgGCClientWelcome should have it all already
     SendMessageToGame(false, k_EMsgGCCStrike15_v2_MatchmakingGC2ClientHello, mmHello);
-
-    // send all ranks here as well, it's a bit back and forth with real gc
     SendRankUpdate();
 }
 
@@ -310,12 +280,10 @@ void ClientGC::AdjustItemEquippedState(GCMessageRead &messageRead)
     CMsgSOMultipleObjects update;
     if (!m_inventory.EquipItem(message.item_id(), message.new_class(), message.new_slot(), update))
     {
-        // no change
         assert(false);
         return;
     }
 
-    // let the gameserver know, too
     SendMessageToGame(true, k_ESOMsg_UpdateMultiple, update);
 }
 
@@ -354,7 +322,6 @@ void ClientGC::UseItemRequest(GCMessageRead &messageRead)
     {
         SendMessageToGame(true, k_ESOMsg_Destroy, destroy);
         SendMessageToGame(true, k_ESOMsg_UpdateMultiple, updateMultiple);
-
         SendMessageToGame(false, k_EMsgGCItemCustomizationNotification, notification);
     }
 }
@@ -409,11 +376,9 @@ void ClientGC::SetItemPositions(GCMessageRead &messageRead)
     {
         for (const CMsgItemAcknowledged &acknowledgement : acknowledgements)
         {
-            // send these to the server only
             GCMessageWrite messageWrite{ k_EMsgGCItemAcknowledged, acknowledgement };
             PostToHost(HostEvent::NetMessage, 0, messageWrite.Data(), messageWrite.Size());
         }
-
         SendMessageToGame(true, k_ESOMsg_UpdateMultiple, update);
     }
     else
@@ -435,13 +400,9 @@ void ClientGC::IncrementKillCountAttribute(GCMessageRead &messageRead)
 
     CMsgSOSingleObject update;
     if (m_inventory.IncrementKillCountAttribute(message.item_id(), message.amount(), update))
-    {
         SendMessageToGame(true, k_ESOMsg_Update, update);
-    }
     else
-    {
         assert(false);
-    }
 }
 
 void ClientGC::ApplySticker(GCMessageRead &messageRead)
@@ -460,26 +421,14 @@ void ClientGC::ApplySticker(GCMessageRead &messageRead)
 
     if (!message.sticker_item_id())
     {
-        // scrape
         if (m_inventory.ScrapeSticker(message, update, destroy, notification))
         {
             if (destroy.has_type_id())
-            {
-                // destroying a default item
                 SendMessageToGame(true, k_ESOMsg_Destroy, destroy);
-            }
-
             if (update.has_type_id())
-            {
-                // if the item got removed (handled above), nothing gets updated
                 SendMessageToGame(true, k_ESOMsg_Update, update);
-            }
-
             if (notification.has_request())
-            {
-                // might get a k_EGCItemCustomizationNotification_RemoveSticker
                 SendMessageToGame(false, k_EMsgGCItemCustomizationNotification, notification);
-            }
         }
         else
         {
@@ -490,7 +439,6 @@ void ClientGC::ApplySticker(GCMessageRead &messageRead)
     {
         SendMessageToGame(true, k_ESOMsg_Destroy, destroy);
         SendMessageToGame(true, k_ESOMsg_Update, update);
-
         SendMessageToGame(false, k_EMsgGCItemCustomizationNotification, notification);
     }
     else
@@ -510,18 +458,15 @@ void ClientGC::StoreGetUserData(GCMessageRead &messageRead)
 
     KeyValue priceSheet{ "price_sheet" };
     if (!priceSheet.ParseFromFile("csgo_gc/price_sheet.txt"))
-    {
         return;
-    }
 
     std::string binaryString;
     binaryString.reserve(1 << 17);
     priceSheet.BinaryWriteToString(binaryString);
 
-    // fuck you idiot
     CMsgStoreGetUserDataResponse response;
     response.set_result(1);
-    response.set_price_sheet_version(1729); // what
+    response.set_price_sheet_version(1729);
     *response.mutable_price_sheet() = std::move(binaryString);
 
     SendMessageToGame(false, k_EMsgGCStoreGetUserDataResponse, response);
@@ -536,14 +481,11 @@ void ClientGC::StorePurchaseInit(GCMessageRead &messageRead)
         return;
     }
 
-    // value doesn't matter
     uint64_t transactionId = Random{}.Integer<uint64_t>();
-
     assert(!m_transactionId);
     m_transactionId = transactionId;
-    m_transactionItemIds.reserve(message.line_items_size()); // rough approx
+    m_transactionItemIds.reserve(message.line_items_size());
 
-    // inventory update response
     std::vector<CMsgSOSingleObject> inventoryUpdate;
 
     for (const auto &item : message.line_items())
@@ -552,34 +494,26 @@ void ClientGC::StorePurchaseInit(GCMessageRead &messageRead)
         {
             uint64_t itemId = m_inventory.PurchaseItem(item.item_def_id(), inventoryUpdate);
             if (!itemId)
-            {
                 assert(false);
-            }
             else
-            {
                 m_transactionItemIds.push_back(itemId);
-            }
         }
     }
 
-    char url[128]; // url doesn't matter, but it needs to be set
+    char url[128];
     snprintf(url, sizeof(url), "https://checkout.steampowered.com/checkout/approvetxn/%llu/?returnurl=steam", transactionId);
 
     CMsgGCStorePurchaseInitResponse response;
-    response.set_result(1); // success
+    response.set_result(1);
     response.set_txn_id(transactionId);
     response.set_url(url);
     response.mutable_item_ids()->Assign(m_transactionItemIds.begin(), m_transactionItemIds.end());
 
     SendMessageToGame(false, k_EMsgGCStorePurchaseInitResponse, response, messageRead.JobId());
 
-    // FIXME: why would the server care???
     for (auto &newItem : inventoryUpdate)
-    {
         SendMessageToGame(true, k_ESOMsg_Create, newItem);
-    }
 
-    // this will run the steam callback
     PostToHost(HostEvent::MicroTransactionResponse, 0, nullptr, 0);
 }
 
@@ -595,17 +529,15 @@ void ClientGC::StorePurchaseFinalize(GCMessageRead &messageRead)
     assert(m_transactionId);
 
     CMsgGCStorePurchaseFinalizeResponse response;
-    response.set_result(1); // success
+    response.set_result(1);
     response.mutable_item_ids()->Assign(m_transactionItemIds.begin(), m_transactionItemIds.end());
     SendMessageToGame(false, k_EMsgGCStorePurchaseFinalizeResponse, response, messageRead.JobId());
 
-    // done with this one
     m_transactionId = 0;
 }
 
 void ClientGC::DeleteItem(GCMessageRead &messageRead)
 {
-    // there is data after this, but i don't know what it is
     uint64_t itemId = messageRead.ReadUint64();
     if (!messageRead.IsValid())
     {
@@ -615,14 +547,9 @@ void ClientGC::DeleteItem(GCMessageRead &messageRead)
 
     CMsgSOSingleObject destroyed;
     if (m_inventory.RemoveItem(itemId, destroyed))
-    {
-        // mikkotodo what does the server want to know
         SendMessageToGame(true, k_ESOMsg_Destroy, destroyed);
-    }
     else
-    {
         assert(false);
-    }
 }
 
 void ClientGC::UnlockCrate(GCMessageRead &messageRead)
@@ -640,19 +567,11 @@ void ClientGC::UnlockCrate(GCMessageRead &messageRead)
     CMsgSOSingleObject destroyCrate, destroyKey, newItem;
     CMsgGCItemCustomizationNotification notification;
 
-    if (m_inventory.UnlockCrate(
-            crateId,
-            keyId,
-            destroyCrate,
-            destroyKey,
-            newItem,
-            notification))
+    if (m_inventory.UnlockCrate(crateId, keyId, destroyCrate, destroyKey, newItem, notification))
     {
-        // mikkotodo what does the server want to know
         SendMessageToGame(true, k_ESOMsg_Destroy, destroyCrate);
         SendMessageToGame(true, k_ESOMsg_Destroy, destroyKey);
         SendMessageToGame(true, k_ESOMsg_Create, newItem);
-
         SendMessageToGame(false, k_EMsgGCItemCustomizationNotification, notification);
     }
     else
@@ -665,7 +584,7 @@ void ClientGC::NameItem(GCMessageRead &messageRead)
 {
     uint64_t nameTagId = messageRead.ReadUint64();
     uint64_t itemId = messageRead.ReadUint64();
-    messageRead.ReadData(1); // skip the sentinel
+    messageRead.ReadData(1);
     std::string_view name = messageRead.ReadString();
 
     if (!messageRead.IsValid())
@@ -680,7 +599,6 @@ void ClientGC::NameItem(GCMessageRead &messageRead)
     {
         SendMessageToGame(true, k_ESOMsg_Update, update);
         SendMessageToGame(true, k_ESOMsg_Destroy, destroy);
-
         SendMessageToGame(false, k_EMsgGCItemCustomizationNotification, notification);
     }
     else
@@ -693,7 +611,7 @@ void ClientGC::NameBaseItem(GCMessageRead &messageRead)
 {
     uint64_t nameTagId = messageRead.ReadUint64();
     uint32_t defIndex = messageRead.ReadUint32();
-    messageRead.ReadData(1); // skip the sentinel
+    messageRead.ReadData(1);
     std::string_view name = messageRead.ReadString();
 
     if (!messageRead.IsValid())
@@ -708,7 +626,6 @@ void ClientGC::NameBaseItem(GCMessageRead &messageRead)
     {
         SendMessageToGame(true, k_ESOMsg_Create, create);
         SendMessageToGame(true, k_ESOMsg_Destroy, destroy);
-
         SendMessageToGame(false, k_EMsgGCItemCustomizationNotification, notification);
     }
     else
@@ -731,19 +648,170 @@ void ClientGC::RemoveItemName(GCMessageRead &messageRead)
     if (m_inventory.RemoveItemName(itemId, update, destroy, notification))
     {
         if (update.has_type_id())
-        {
             SendMessageToGame(true, k_ESOMsg_Update, update);
-        }
-
         if (destroy.has_type_id())
-        {
             SendMessageToGame(true, k_ESOMsg_Destroy, destroy);
-        }
-
         SendMessageToGame(false, k_EMsgGCItemCustomizationNotification, notification);
     }
     else
     {
         assert(false);
     }
+}
+
+// ============================================================
+// BOT MATCHMAKING SIMULATION
+// ============================================================
+
+std::string ClientGC::PickMapForGameType(uint32_t gameType)
+{
+    static const char *compMaps[] = {
+        "de_dust2", "de_mirage", "de_inferno", "de_nuke",
+        "de_overpass", "de_vertigo", "de_ancient"
+    };
+    static const char *wingmanMaps[] = {
+        "de_shortdust", "de_lake", "de_shortnuke", "de_train"
+    };
+
+    bool isWingman = (gameType & 1024) != 0;
+    if (isWingman)
+        return wingmanMaps[rand() % 4];
+    return compMaps[rand() % 7];
+}
+
+void ClientGC::SendMatchmakingUpdate(int state)
+{
+    CMsgGCCStrike15_v2_MatchmakingGC2ClientUpdate update;
+    update.set_matchmaking(state);
+
+    auto *gs = update.mutable_global_stats();
+    gs->set_players_online(12345);
+    gs->set_servers_online(500);
+    gs->set_players_searching(1337);
+    gs->set_servers_available(250);
+    gs->set_ongoing_matches(300);
+    gs->set_search_time_avg(45);
+    gs->set_required_appid_version(13857);
+    gs->set_pricesheet_version(1680057676);
+
+    SendMessageToGame(false, k_EMsgGCCStrike15_v2_MatchmakingGC2ClientUpdate, update);
+    Platform::Print("ClientGC: matchmaking state -> %d\n", state);
+}
+
+void ClientGC::LaunchBotServer(uint32_t gameType, const std::string &map)
+{
+    int rank = GetConfig().CompetitiveRank();
+    int botDifficulty = 0;
+    int botQuota = 9;
+
+    if (rank >= 15)      botDifficulty = 3;
+    else if (rank >= 10) botDifficulty = 2;
+    else if (rank >= 5)  botDifficulty = 1;
+    else                 botDifficulty = 0;
+
+    if ((gameType & 1024) != 0) botQuota = 3;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
+        "start /B srcds.exe -game csgo -console -usercon +game_type 0 +game_mode 1 "
+        "+map %s +bot_quota %d +bot_difficulty %d "
+        "+bot_join_after_player 0 +bot_chatter off "
+        "+sv_lan 1 +sv_cheats 0 +exec gamemode_competitive "
+        "-port 27015 -maxplayers_override 10",
+        map.c_str(), botQuota, botDifficulty);
+
+    Platform::Print("ClientGC: launching bot server: %s\n", cmd);
+    system(cmd);
+}
+
+void ClientGC::SendMatchFound()
+{
+    std::string map = PickMapForGameType(m_searchGameType);
+    LaunchBotServer(m_searchGameType, map);
+
+    std::this_thread::sleep_for(std::chrono::seconds(3));
+
+    uint32_t localIp = (127u << 24) | 1u;
+
+    CMsgGCCStrike15_v2_MatchmakingGC2ClientReserve reserve;
+    reserve.set_serverid(1337);
+    reserve.set_direct_udp_ip(localIp);
+    reserve.set_direct_udp_port(27015);
+    reserve.set_reservationid(0xDEADBEEF);
+    reserve.set_map(map);
+    reserve.set_server_address("127.0.0.1:27015\n");
+
+    SendMessageToGame(false, k_EMsgGCCStrike15_v2_MatchmakingGC2ClientReserve, reserve);
+    Platform::Print("ClientGC: match found! map=%s\n", map.c_str());
+}
+
+void ClientGC::OnMatchmakingStart(GCMessageRead &messageRead)
+{
+    CMsgGCCStrike15_v2_MatchmakingStart msg;
+    if (!messageRead.ReadProtobuf(msg))
+    {
+        Platform::Print("Parsing CMsgGCCStrike15_v2_MatchmakingStart failed\n");
+        return;
+    }
+
+    if (m_searching)
+    {
+        Platform::Print("ClientGC: already searching, ignoring\n");
+        return;
+    }
+
+    m_searching = true;
+    m_searchGameType = msg.game_type();
+
+    Platform::Print("ClientGC: matchmaking started, game_type=%u\n", m_searchGameType);
+    SendMatchmakingUpdate(1);
+
+    if (m_matchmakingThread.joinable())
+        m_matchmakingThread.join();
+
+    m_matchmakingThread = std::thread([this]()
+    {
+        int waitSeconds = 5 + (rand() % 15);
+        Platform::Print("ClientGC: searching... ETA %d sec\n", waitSeconds);
+        std::this_thread::sleep_for(std::chrono::seconds(waitSeconds));
+
+        if (!m_searching) return;
+
+        SendMatchFound();
+        m_searching = false;
+    });
+}
+
+void ClientGC::OnMatchmakingStop(GCMessageRead &messageRead)
+{
+    CMsgGCCStrike15_v2_MatchmakingStop msg;
+    if (!messageRead.ReadProtobuf(msg))
+    {
+        Platform::Print("Parsing CMsgGCCStrike15_v2_MatchmakingStop failed\n");
+        return;
+    }
+
+    m_searching = false;
+    SendMatchmakingUpdate(0);
+    Platform::Print("ClientGC: matchmaking stopped\n");
+}
+
+void ClientGC::UpdateRankAfterMatch(bool won)
+{
+    RankId current = GetConfig().CompetitiveRank();
+    int newRank = static_cast<int>(current);
+
+    if (won && newRank < 18) newRank++;
+    else if (!won && newRank > 1) newRank--;
+
+    Platform::Print("ClientGC: rank update %d -> %d (win=%d)\n", current, newRank, (int)won);
+
+    CMsgGCCStrike15_v2_ClientGCRankUpdate message;
+    PlayerRankingInfo *rank = message.add_rankings();
+    rank->set_account_id(AccountId());
+    rank->set_rank_id(static_cast<RankId>(newRank));
+    rank->set_wins(GetConfig().CompetitiveWins() + (won ? 1 : 0));
+    rank->set_rank_type_id(RankTypeCompetitive);
+
+    SendMessageToGame(false, k_EMsgGCCStrike15_v2_ClientGCRankUpdate, message);
 }
