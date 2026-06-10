@@ -70,8 +70,7 @@ option(CRYPTOPP_BUILD_TESTING "Build library tests" OFF)
 option(CRYPTOPP_INSTALL "Generate the install target for this project." OFF)
 FetchContent_Declare(cryptopp-cmake
 	GIT_REPOSITORY https://github.com/abdes/cryptopp-cmake
-	GIT_TAG CRYPTOPP_8_9_0
-	GIT_SHALLOW TRUE)
+	GIT_TAG CRYPTOPP_8_9_0)
 FetchContent_MakeAvailable(cryptopp-cmake)
 #-------------------------------------------------
 # funchook
