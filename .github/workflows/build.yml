@@ -5,6 +5,7 @@ on:
     branches: [ "master" ]
   pull_request:
     branches: [ "master" ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -32,7 +33,6 @@ jobs:
         sudo apt-get update
         sudo apt install --yes --no-install-recommends gcc-multilib g++-multilib
 
-    # ugh, should clean this up
     - if: matrix.os == 'ubuntu-latest'
       name: Build Linux
       run: |
@@ -79,7 +79,6 @@ jobs:
       run: |
         $out = Join-Path $env:GITHUB_WORKSPACE $env:OUTNAME
         if (Test-Path $out) { Remove-Item $out -Force }
-        # include everything under release
         Compress-Archive -Path (Join-Path $env:GITHUB_WORKSPACE 'release\*') -DestinationPath $out -Force
         Get-ChildItem $out
 
@@ -116,11 +115,9 @@ jobs:
           TAG=continuous
           files=( $(find artifacts -type f -name "*.zip") )
 
-          # schizo check
           if [ ${#files[@]} -gt 0 ]; then
             gh release delete "$TAG" --cleanup-tag --repo "$REPO" --yes || true
 
-            # kludge to avoid the release being created as a draft...
             sleep 10s
 
             gh release create "$TAG" --repo "$REPO" \
