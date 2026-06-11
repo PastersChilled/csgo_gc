@@ -9,52 +9,38 @@ on:
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
-
-    env:
-      SCCACHE_GHA_ENABLED: "true"
-
-    strategy:
-      matrix:
-        os: [windows-latest]
-        build_type: [Release]
+    runs-on: windows-latest
 
     steps:
     - uses: actions/checkout@v4
 
-    - if: matrix.os != 'windows-latest'
-      name: Run sccache-cache
-      uses: mozilla-actions/sccache-action@v0.0.9
-
-    - if: matrix.os == 'ubuntu-latest'
-      name: Dependencies
-      run: |
-        sudo dpkg --add-architecture i386
-        sudo apt-get update
-        sudo apt install --yes --no-install-recommends gcc-multilib g++-multilib
-
-    - if: matrix.os == 'ubuntu-latest'
-      name: Build Linux
+    - name: Build Windows
+      shell: pwsh
       run: |
         mkdir ${{ github.workspace }}/release
-        cmake -B ${{ github.workspace }}/build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -S ${{ github.workspace }} -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DOUTDIR=${{ github.workspace }}/release
-        cmake --build ${{ github.workspace }}/build --config ${{ matrix.build_type }} --target csgo csgo_gc
-        cmake -B ${{ github.workspace }}/build_ds -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -S ${{ github.workspace }} -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DCMAKE_C_FLAGS=-m32 -DCMAKE_CXX_FLAGS=-m32 -DCMAKE_ASM_FLAGS=-m32 -DOUTDIR=${{ github.workspace }}/release
-        cmake --build ${{ github.workspace }}/build_ds --config ${{ matrix.build_type }} --target srcds csgo_gc
 
-    - if: matrix.os == 'macos-latest'
-      name: Build macOS
-      run: |
-        mkdir ${{ github.workspace }}/release
-        cmake -B ${{ github.workspace }}/build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -S ${{ github.workspace }} -DCMAKE_OSX_ARCHITECTURES=x86_64 -DFUNCHOOK_CPU=x86 -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DOUTDIR=${{ github.workspace }}/release
-        cmake --build ${{ github.workspace }}/build --config ${{ matrix.build_type }} --target csgo csgo_gc
+        # Конфигурируем (скачивает зависимости)
+        cmake -A Win32 -B ${{ github.workspace }}/build -DCMAKE_BUILD_TYPE=Release -S ${{ github.workspace }} -DOUTDIR=${{ github.workspace }}/release
 
-    - if: matrix.os == 'windows-latest'
-      name: Build Windows
-      run: |
-        mkdir ${{ github.workspace }}/release
-        cmake -A Win32 -B ${{ github.workspace }}/build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -S ${{ github.workspace }} -DOUTDIR=${{ github.workspace }}/release
-        cmake --build ${{ github.workspace }}/build --config ${{ matrix.build_type }} --target csgo srcds csgo_gc
+        # Патчим integer.cpp - убираем stdext::make_checked_array_iterator
+        $intFile = "${{ github.workspace }}/build/_deps/cryptopp-cmake-build/cryptopp/integer.cpp"
+        if (Test-Path $intFile) {
+          (Get-Content $intFile -Raw) `
+            -replace '#if \(CRYPTOPP_MSC_VERSION >= 1500\)\r?\n\t\t\tstd::reverse_copy\(encodedInteger, encodedInteger\+byteCount,\r?\n\t\t\t\tstdext::make_checked_array_iterator\(block\.begin\(\), block\.size\(\)\)\);', `
+                     '#if (CRYPTOPP_MSC_VERSION >= 1500) && 0`n`t`t`tstd::reverse_copy(encodedInteger, encodedInteger+byteCount,`n`t`t`t`tstdext::make_checked_array_iterator(block.begin(), block.size()));' |
+          Set-Content $intFile -NoNewline
+        }
+
+        # Патчим zdeflate.cpp - убираем stdext::make_unchecked_array_iterator
+        $zdFile = "${{ github.workspace }}/build/_deps/cryptopp-cmake-build/cryptopp/zdeflate.cpp"
+        if (Test-Path $zdFile) {
+          (Get-Content $zdFile -Raw) `
+            -replace '#if CRYPTOPP_MSC_VERSION >= 1600', '#if 0 // patched: stdext removed in VS2026' |
+          Set-Content $zdFile -NoNewline
+        }
+
+        # Собираем
+        cmake --build ${{ github.workspace }}/build --config Release --target csgo srcds csgo_gc
 
     - name: Package
       shell: bash
@@ -71,29 +57,17 @@ jobs:
         cp $GITHUB_WORKSPACE/examples/price_sheet.txt $GITHUB_WORKSPACE/release/csgo_gc/
         cp $GITHUB_WORKSPACE/examples/unusual_loot_lists.txt $GITHUB_WORKSPACE/release/csgo_gc/
 
-    - name: Zip artifacts (Windows)
-      if: runner.os == 'Windows'
+    - name: Zip artifacts
       shell: pwsh
-      env:
-        OUTNAME: csgo_gc-${{ matrix.os }}.zip
       run: |
-        $out = Join-Path $env:GITHUB_WORKSPACE $env:OUTNAME
-        if (Test-Path $out) { Remove-Item $out -Force }
+        $out = Join-Path $env:GITHUB_WORKSPACE "csgo_gc-windows.zip"
         Compress-Archive -Path (Join-Path $env:GITHUB_WORKSPACE 'release\*') -DestinationPath $out -Force
-        Get-ChildItem $out
-
-    - name: Zip artifacts (non-Windows)
-      if: runner.os != 'Windows'
-      shell: bash
-      run: |
-        OUTNAME="csgo_gc-${{ matrix.os }}.zip"
-        (cd release && zip -r "../${OUTNAME}" .)
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: artifact-${{ matrix.os }}
-        path: ${{ github.workspace }}/csgo_gc-${{ matrix.os }}.zip
+        name: csgo_gc-windows
+        path: ${{ github.workspace }}/csgo_gc-windows.zip
 
   publish:
     if: github.event_name != 'pull_request'
@@ -114,16 +88,12 @@ jobs:
         run: |
           TAG=continuous
           files=( $(find artifacts -type f -name "*.zip") )
-
           if [ ${#files[@]} -gt 0 ]; then
             gh release delete "$TAG" --cleanup-tag --repo "$REPO" --yes || true
-
             sleep 10s
-
             gh release create "$TAG" --repo "$REPO" \
               --title "Continuous Build" \
               --notes "$SHA" \
               --target "$SHA"
-
             gh release upload "$TAG" --repo "$REPO" "${files[@]}" --clobber
           fi
