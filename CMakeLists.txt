@@ -33,11 +33,6 @@ else()
 endif()
 if (MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    add_compile_options(
-        /D_SILENCE_STDEXT_ARR_ITERS_DEPRECATION_WARNING
-        /D_SILENCE_ALL_MS_EXT_DEPRECATION_WARNINGS
-        /D_SCL_SECURE_NO_WARNINGS
-    )
 else()
     add_compile_options(-fpic -fvisibility=hidden)
     if (NOT APPLE)
@@ -67,11 +62,13 @@ FetchContent_MakeAvailable(protobuf)
 #-------------------------------------------------
 option(CRYPTOPP_BUILD_TESTING "Build library tests" OFF)
 option(CRYPTOPP_INSTALL "Generate the install target for this project." OFF)
-option(CRYPTOPP_USE_MASTER_BRANCH_ON_TESTS "Use master branch for tests" OFF)
 FetchContent_Declare(cryptopp-cmake
     GIT_REPOSITORY https://github.com/abdes/cryptopp-cmake
     GIT_TAG CRYPTOPP_8_9_0)
 FetchContent_MakeAvailable(cryptopp-cmake)
+if (MSVC)
+    target_compile_definitions(cryptopp PRIVATE _SILENCE_STDEXT_ARR_ITERS_DEPRECATION_WARNING)
+endif()
 #-------------------------------------------------
 # funchook
 #-------------------------------------------------
