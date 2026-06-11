@@ -14,32 +14,40 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Build Windows
+    - name: Configure (download deps)
       shell: pwsh
       run: |
         mkdir ${{ github.workspace }}/release
-
-        # Конфигурируем (скачивает зависимости)
         cmake -A Win32 -B ${{ github.workspace }}/build -DCMAKE_BUILD_TYPE=Release -S ${{ github.workspace }} -DOUTDIR=${{ github.workspace }}/release
 
-        # Патчим integer.cpp - убираем stdext::make_checked_array_iterator
-        $intFile = "${{ github.workspace }}/build/_deps/cryptopp-cmake-build/cryptopp/integer.cpp"
+    - name: Patch cryptopp
+      shell: pwsh
+      run: |
+        $intFile = "${{ github.workspace }}\build\_deps\cryptopp-cmake-build\cryptopp\integer.cpp"
+        $zdFile  = "${{ github.workspace }}\build\_deps\cryptopp-cmake-build\cryptopp\zdeflate.cpp"
+
         if (Test-Path $intFile) {
-          (Get-Content $intFile -Raw) `
-            -replace '#if \(CRYPTOPP_MSC_VERSION >= 1500\)\r?\n\t\t\tstd::reverse_copy\(encodedInteger, encodedInteger\+byteCount,\r?\n\t\t\t\tstdext::make_checked_array_iterator\(block\.begin\(\), block\.size\(\)\)\);', `
-                     '#if (CRYPTOPP_MSC_VERSION >= 1500) && 0`n`t`t`tstd::reverse_copy(encodedInteger, encodedInteger+byteCount,`n`t`t`t`tstdext::make_checked_array_iterator(block.begin(), block.size()));' |
-          Set-Content $intFile -NoNewline
+          $c = [System.IO.File]::ReadAllText($intFile)
+          $c = $c -replace '#if \(CRYPTOPP_MSC_VERSION >= 1500\)', '#if (0) // patched'
+          [System.IO.File]::WriteAllText($intFile, $c)
+          Write-Host "Patched integer.cpp"
+        } else {
+          Write-Host "integer.cpp not found at $intFile"
+          Get-ChildItem "${{ github.workspace }}\build\_deps" -Recurse -Filter "integer.cpp" | Select-Object FullName
         }
 
-        # Патчим zdeflate.cpp - убираем stdext::make_unchecked_array_iterator
-        $zdFile = "${{ github.workspace }}/build/_deps/cryptopp-cmake-build/cryptopp/zdeflate.cpp"
         if (Test-Path $zdFile) {
-          (Get-Content $zdFile -Raw) `
-            -replace '#if CRYPTOPP_MSC_VERSION >= 1600', '#if 0 // patched: stdext removed in VS2026' |
-          Set-Content $zdFile -NoNewline
+          $c = [System.IO.File]::ReadAllText($zdFile)
+          $c = $c -replace '#if CRYPTOPP_MSC_VERSION >= 1600', '#if (0) // patched'
+          [System.IO.File]::WriteAllText($zdFile, $c)
+          Write-Host "Patched zdeflate.cpp"
+        } else {
+          Write-Host "zdeflate.cpp not found at $zdFile"
         }
 
-        # Собираем
+    - name: Build
+      shell: pwsh
+      run: |
         cmake --build ${{ github.workspace }}/build --config Release --target csgo srcds csgo_gc
 
     - name: Package
