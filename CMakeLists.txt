@@ -33,11 +33,10 @@ else()
 endif()
 if (MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    add_compile_definitions(
-        _SILENCE_STDEXT_ARR_ITERS_DEPRECATION_WARNING
-        _SILENCE_ALL_MS_EXT_DEPRECATION_WARNINGS
-        _SCL_SECURE_NO_WARNINGS
-        _ITERATOR_DEBUG_LEVEL=0
+    add_compile_options(
+        /D_SILENCE_STDEXT_ARR_ITERS_DEPRECATION_WARNING
+        /D_SILENCE_ALL_MS_EXT_DEPRECATION_WARNINGS
+        /D_SCL_SECURE_NO_WARNINGS
     )
 else()
     add_compile_options(-fpic -fvisibility=hidden)
@@ -59,18 +58,19 @@ option(protobuf_BUILD_PROTOC_BINARIES "Build libprotoc and protoc compiler" OFF)
 option(protobuf_BUILD_SHARED_LIBS "Build Shared Libraries" OFF)
 option(protobuf_WITH_ZLIB "Build with zlib support" OFF)
 FetchContent_Declare(protobuf
-	GIT_REPOSITORY https://github.com/protocolbuffers/protobuf
-	GIT_TAG 2798a968c330de223b711e4fe504800280f333fb
-	GIT_SHALLOW TRUE)
+    GIT_REPOSITORY https://github.com/protocolbuffers/protobuf
+    GIT_TAG 2798a968c330de223b711e4fe504800280f333fb
+    GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(protobuf)
 #-------------------------------------------------
 # cryptopp-cmake
 #-------------------------------------------------
 option(CRYPTOPP_BUILD_TESTING "Build library tests" OFF)
 option(CRYPTOPP_INSTALL "Generate the install target for this project." OFF)
+option(CRYPTOPP_USE_MASTER_BRANCH_ON_TESTS "Use master branch for tests" OFF)
 FetchContent_Declare(cryptopp-cmake
-	GIT_REPOSITORY https://github.com/abdes/cryptopp-cmake
-	GIT_TAG CRYPTOPP_8_9_0)
+    GIT_REPOSITORY https://github.com/abdes/cryptopp-cmake
+    GIT_TAG CRYPTOPP_8_9_0)
 FetchContent_MakeAvailable(cryptopp-cmake)
 #-------------------------------------------------
 # funchook
@@ -79,6 +79,6 @@ option(FUNCHOOK_BUILD_SHARED "build shared library" OFF)
 option(FUNCHOOK_BUILD_TESTS "Build tests" OFF)
 option(FUNCHOOK_INSTALL "Install Funchook" OFF)
 FetchContent_Declare(funchook
-	GIT_REPOSITORY https://github.com/kubo/funchook
-	GIT_SHALLOW TRUE)
+    GIT_REPOSITORY https://github.com/kubo/funchook
+    GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(funchook)
