@@ -198,18 +198,13 @@ void ClientGC::BuildMatchmakingHello(CMsgGCCStrike15_v2_MatchmakingGC2ClientHell
     message.mutable_global_stats()->set_required_appid_version2(13862);
 
     message.set_vac_banned(GetConfig().VacBanned());
+    message.set_penalty_seconds(0);
+    message.set_penalty_reason(0);
     message.mutable_commendation()->set_cmd_friendly(GetConfig().CommendedFriendly());
     message.mutable_commendation()->set_cmd_teaching(GetConfig().CommendedTeaching());
     message.mutable_commendation()->set_cmd_leader(GetConfig().CommendedLeader());
     message.set_player_level(GetConfig().Level());
     message.set_player_cur_xp(GetConfig().Xp());
-
-    // Включаем MM
-    message.set_penalty_seconds(0);
-    message.set_penalty_reason(0);
-    message.set_matches_won(GetConfig().CompetitiveWins());
-    message.set_player_ranking_disabled(false);
-    message.set_player_ban_lowpri(false);
 
     PlayerRankingInfo *rank = message.mutable_ranking();
     rank->set_account_id(AccountId());
