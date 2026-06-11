@@ -183,12 +183,12 @@ void ClientGC::BuildMatchmakingHello(CMsgGCCStrike15_v2_MatchmakingGC2ClientHell
 {
     message.set_account_id(AccountId());
 
-    message.mutable_global_stats()->set_players_online(0);
-    message.mutable_global_stats()->set_servers_online(0);
-    message.mutable_global_stats()->set_players_searching(0);
-    message.mutable_global_stats()->set_servers_available(0);
-    message.mutable_global_stats()->set_ongoing_matches(0);
-    message.mutable_global_stats()->set_search_time_avg(0);
+    message.mutable_global_stats()->set_players_online(12345);
+    message.mutable_global_stats()->set_servers_online(500);
+    message.mutable_global_stats()->set_players_searching(1337);
+    message.mutable_global_stats()->set_servers_available(250);
+    message.mutable_global_stats()->set_ongoing_matches(300);
+    message.mutable_global_stats()->set_search_time_avg(45);
     message.mutable_global_stats()->set_main_post_url("");
     message.mutable_global_stats()->set_required_appid_version(13857);
     message.mutable_global_stats()->set_pricesheet_version(1680057676);
@@ -203,6 +203,19 @@ void ClientGC::BuildMatchmakingHello(CMsgGCCStrike15_v2_MatchmakingGC2ClientHell
     message.mutable_commendation()->set_cmd_leader(GetConfig().CommendedLeader());
     message.set_player_level(GetConfig().Level());
     message.set_player_cur_xp(GetConfig().Xp());
+
+    // Включаем MM
+    message.set_penalty_seconds(0);
+    message.set_penalty_reason(0);
+    message.set_matches_won(GetConfig().CompetitiveWins());
+    message.set_player_ranking_disabled(false);
+    message.set_player_ban_lowpri(false);
+
+    PlayerRankingInfo *rank = message.mutable_ranking();
+    rank->set_account_id(AccountId());
+    rank->set_rank_id(GetConfig().CompetitiveRank());
+    rank->set_wins(GetConfig().CompetitiveWins());
+    rank->set_rank_type_id(RankTypeCompetitive);
 }
 
 void ClientGC::BuildClientWelcome(CMsgClientWelcome &message, const CMsgCStrike15Welcome &csWelcome,
